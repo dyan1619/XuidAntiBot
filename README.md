@@ -28,7 +28,6 @@ setting can be changed live — either through the in-game form UI
 - [How it works](#how-it-works)
 - [Requirements](#requirements)
 - [Installation](#installation)
-- [Upgrading from `endstone-antibot`](#upgrading-from-endstone-antibot)
 - [Quick start](#quick-start)
 - [Commands](#commands)
 - [Permissions](#permissions)
@@ -123,6 +122,41 @@ already-verified players), the join limit runs before the expensive
 detection layers to stop floods early, and every auto-block uses the same
 generic kick message so attackers cannot learn which layer caught them.
 
+### Maintenance vs. lockdown
+
+These are the two "hard lock" toggles and it's easy to mix them up — they
+exist for two different situations:
+
+- **Maintenance mode** — use this when **you're taking the server down
+  for upkeep** (updates, migrations, backups, planned downtime). It shuts
+  the door to everyone except operators, including players who are
+  already verified regulars, since the point is that *nobody* should be
+  playing right now.
+- **Lockdown mode** — use this when **the server is under an active bot
+  or raid attack** and you need to stop the bleeding immediately. It
+  blocks every player who has never verified before, while still letting
+  your existing verified community play normally — so you're not forced
+  to shut the whole server down just to stop an attack in progress.
+  Lockdown only **rejects the connection** (a kick with a message) — it
+  does not add the IP to the auto-block list the way the bot-detection
+  layers do. It's a manual, reversible gate, not a punishment: turn it
+  off and blocked players can simply reconnect.
+
+| | Maintenance | Lockdown |
+|---|---|---|
+| Command | `/abset maintenance on` | `/abset lockdown on` |
+| Use case | Planned server maintenance / downtime | Under active bot attack or raid, right now |
+| Blocks | **Everyone** except operators — including already-verified players | Only players who have **never verified** |
+| Verified players | Blocked too | Let through |
+| Operators | Always bypass, by design | Blocked too (unless also verified) |
+| IP auto-blocked? | No | No — kick only, no auto-block |
+| Runs at | Layer 1 (first check, before anything else) | Layer 4 (after the verified bypass) |
+
+In short: **lockdown** stops an ongoing attack while keeping the server
+open for your real players; **maintenance** closes the server to
+everyone but staff. Both can be toggled from `/abmenu` as well as
+`/abset`.
+
 Players who pass all nine layers and have never verified before enter a
 **pending** state and receive the verification form (see
 [verification modes](#verification-modes)). Until they answer correctly
@@ -157,30 +191,13 @@ their xuid as verified — permanently, until you clear the file.
 4. Done. The plugin folder `plugins/XuidAntiBot/` with the default config
    is created on first start.
 
-## Upgrading from `endstone-antibot`
-
-The plugin was previously distributed as `endstone-antibot` and showed up
-in-game as `antibot`. If you are upgrading an existing installation:
-
-1. **Remove the old wheel** from `plugins/` before adding the new one —
-   both plugins register the same `/ab...` commands and cannot run side
-   by side.
-2. Drop in `endstone_xuidantibot-<version>-py3-none-any.whl` and restart.
-3. Your data moves automatically: on the first start after the upgrade,
-   the plugin copies `antibot_config.json`, `antibot_blocked.json` and
-   `antibot_verified.json` from the old `plugins/antibot/` folder into
-   `plugins/XuidAntiBot/`. The old folder is never modified or deleted —
-   it stays in place as a manual backup.
-4. The permission id (`antibot.admin`), all six command names and the
-   three JSON file names are unchanged — existing operator setups,
-   permission plugins and scripts keep working as-is.
-
 ## Quick start
 
 Run these as an operator, in game:
 
 ```text
-/abmenu                          open the config UI and look around
+/abmenu                          open the config UI — easiest way to
+                                  configure everything, no commands needed
 /abset strict on                 (recommended) strongest verification
 /abset blockexpiry 7             auto-blocks expire after 7 days
 /abgeo countries add VN          (optional) allow your country only:
@@ -188,6 +205,9 @@ Run these as an operator, in game:
 /abgeo on
 /abstatus                        review the current configuration
 ```
+
+Everything above the `/abstatus` line can also be done through `/abmenu`
+instead — it's the same settings, just presented as an in-game form.
 
 The plugin is fully functional with zero configuration — the defaults
 already block name bots, empty-xuid bots, login spam, and form-less bots,
@@ -221,13 +241,19 @@ regardless of this permission.
 There are three equivalent ways to change any setting — they share the
 same backend, so the result is always the same:
 
-1. **`/abmenu`** — the in-game form UI (most comfortable)
+1. **`/abmenu`** — the in-game form UI (recommended — no need to learn
+   any command syntax or key names, everything is point-and-click)
 2. **`/abset <key> [value...]`** — the all-in-one command (console-friendly)
 3. **Edit `plugins/XuidAntiBot/antibot_config.json`** by hand, then `/abreload`
 
 All changes persist immediately to `antibot_config.json`.
 
 ### Config menu UI (`/abmenu`)
+
+The easiest way to configure the plugin. Run `/abmenu` in game and every
+setting is presented as buttons, toggles, sliders and text fields inside
+Minecraft forms — no need to memorize `/abset` keys or edit JSON by hand.
+Changes made in the UI apply and save immediately, the same as `/abset`.
 
 The UI is organized into sections:
 
@@ -240,6 +266,9 @@ The UI is organized into sections:
 - **Join limit** — whole-server flood protection
 - **Blocked IPs** — inspect and unblock individual IPs
 - **Main servers** — manage the transfer target list
+
+Every section opens as its own form, so you only ever see the settings
+relevant to what you're changing.
 
 ### All-in-one command (`/abset`)
 
@@ -372,9 +401,6 @@ All state lives in `plugins/XuidAntiBot/` as plain JSON:
 | `antibot_verified.json` | Sorted list of verified player keys (xuid) |
 
 - Hand-editing is supported: fix what you need, then run `/abreload`
-- Upgrading from the pre-rename `endstone-antibot`? The three files are
-  copied over automatically on first start (see
-  [upgrading](#upgrading-from-endstone-antibot))
 - Older file generations are migrated transparently on load (the blocked
   file has three historical formats, all still readable)
 - Invalid entries (bad regex, missing fields, wrong types) are skipped
