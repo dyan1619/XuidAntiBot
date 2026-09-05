@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone-xuidantibot"
+version = "1.0.1"
+description = "XuidAntiBot plugin for Endstone (Bedrock) - verify forms, rate-limit, geo filter, AntiVPN, lockdown, maintenance, join-limit"
+readme = "README.md"
+authors = [{ name = "dyan1619" }]
+license = "GPL-3.0-or-later"
+requires-python = ">=3.11"
+keywords = ["minecraft", "bedrock", "endstone", "xuid", "antibot", "antivpn", "captcha"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: System Administrators",
+    "Topic :: Games/Entertainment",
+    "Topic :: Security",
+    "Programming Language :: Python :: 3",
+]
+dependencies = ["endstone"]
+
+[project.entry-points."endstone"]
+xuidantibot = "xuid_antibot:AntiBotPlugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["xuid_antibot"]

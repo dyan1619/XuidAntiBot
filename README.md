@@ -1,6 +1,6 @@
 # XuidAntiBot
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)]()
+[![Version](https://img.shields.io/badge/version-1.0.1-blue)]()
 [![Endstone API](https://img.shields.io/badge/Endstone%20API-0.11-blueviolet)](https://endstone.dev)
 [![Minecraft](https://img.shields.io/badge/Minecraft-Bedrock-green)](https://endstone.dev)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org)
@@ -181,7 +181,7 @@ their xuid as verified — permanently, until you clear the file.
    ├── endstone.exe            # or your endstone launcher
    ├── worlds/...
    └── plugins/
-       └── endstone_xuidantibot-1.0.0-py3-none-any.whl
+       └── endstone_xuidantibot-1.0.1-py3-none-any.whl
    ```
 3. Restart the server. Endstone installs the plugin automatically and
    prints:
@@ -452,7 +452,7 @@ xuid_antibot/
 ```bash
 # Build the wheel from source
 pip install build
-python -m build          # -> dist/endstone_xuidantibot-1.0.0-py3-none-any.whl
+python -m build          # -> dist/endstone_xuidantibot-1.0.1-py3-none-any.whl
 
 # Live development on a running server
 pip install -e .         # in the server's Python environment
