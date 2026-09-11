@@ -1,6 +1,6 @@
 # XuidAntiBot
 
-[![Version](https://img.shields.io/badge/version-1.0.1-blue)]()
+[![Version](https://img.shields.io/badge/version-1.0.2-blue)]()
 [![Endstone API](https://img.shields.io/badge/Endstone%20API-0.11-blueviolet)](https://endstone.dev)
 [![Minecraft](https://img.shields.io/badge/Minecraft-Bedrock-green)](https://endstone.dev)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org)
@@ -52,7 +52,8 @@ setting can be changed live — either through the in-game form UI
 
 - Maintenance mode — hard lock, only operators can join
 - Country filter (whitelist or blacklist, ISO 3166-1 alpha-2 codes)
-- AntiVPN — rejects proxy, VPN and hosting/datacenter IPs
+- AntiVPN — rejects proxy and VPN IPs (and hosting/datacenter IPs
+  when the configured API reports them)
 - Automatic IP blocking with configurable expiry, auto-renewed if the
   attacker keeps hammering while blocked
 - Bot name detection via custom regex patterns
@@ -62,6 +63,9 @@ setting can be changed live — either through the in-game form UI
 - Per-IP login rate limit (e.g. more than 3 logins in 60 s = auto-block)
 - Join limit — caps total unverified joins across the whole server to
   survive join floods
+- Pending-IP conflict guard — only one unfinished verification session
+  per IP; a second connection is rejected without an auto-block
+  (shared-NAT friendly)
 - Lockdown mode — blocks all unverified players with one command
 
 **In-game verification (layer 4)**
@@ -107,20 +111,26 @@ here means the player entity is never created):
 | # | Layer | Action |
 |---|-------|--------|
 | 1 | Maintenance mode | Only operators may join |
-| 2 | Geo filter + AntiVPN | Reject disallowed countries and proxy/VPN/hosting IPs |
+| 2 | Geo filter + AntiVPN | Reject disallowed countries and proxy/VPN IPs (hosting too, when the API reports it) |
 | 3 | Verified bypass | Players verified before skip the IP blocklist and rate limit |
 | 4 | Lockdown | Block everyone not yet verified |
 | 5 | Join limit | Cap total unverified joins server-wide (kick as "overloaded") |
-| 6 | Blocked IP list | Reject known-bad IPs, auto-extend the ban on retry |
-| 7 | Bot name pattern + `_` | Auto-block the IP |
-| 8 | Empty xuid | Auto-block the IP |
-| 9 | Per-IP rate limit | Too many logins in the window = auto-block the IP |
+| 6 | Pending-IP conflict | One unfinished verification session per IP — a second connection from the same IP is rejected (no auto-block; the attempt still counts toward the per-IP rate limit) |
+| 7 | Blocked IP list | Reject known-bad IPs, auto-extend the ban on retry |
+| 8 | Bot name pattern + `_` | Auto-block the IP |
+| 9 | Empty xuid | Auto-block the IP |
+| 10 | Per-IP rate limit | Too many logins in the window = auto-block the IP |
 
 The order is deliberate: geo/AntiVPN runs **before** the verified bypass
 (when you change the country rules, they apply to everyone, including
 already-verified players), the join limit runs before the expensive
-detection layers to stop floods early, and every auto-block uses the same
-generic kick message so attackers cannot learn which layer caught them.
+detection layers to stop floods early, the pending-IP conflict layer
+deliberately does **not** auto-block the IP (two real players behind a
+shared NAT must not be punished — but the rejected attempt still counts
+toward the per-IP rate limit, so a bot opening parallel connections on
+one IP is caught by layer 10 as usual), and every auto-block uses the
+same generic kick message so attackers cannot learn which layer caught
+them.
 
 ### Maintenance vs. lockdown
 
@@ -157,7 +167,7 @@ open for your real players; **maintenance** closes the server to
 everyone but staff. Both can be toggled from `/abmenu` as well as
 `/abset`.
 
-Players who pass all nine layers and have never verified before enter a
+Players who pass all ten layers and have never verified before enter a
 **pending** state and receive the verification form (see
 [verification modes](#verification-modes)). Until they answer correctly
 they are blind, invisible, isolated, and frozen. Passing the form marks
@@ -181,7 +191,7 @@ their xuid as verified — permanently, until you clear the file.
    ├── endstone.exe            # or your endstone launcher
    ├── worlds/...
    └── plugins/
-       └── endstone_xuidantibot-1.0.1-py3-none-any.whl
+       └── endstone_xuidantibot-1.0.2-py3-none-any.whl
    ```
 3. Restart the server. Endstone installs the plugin automatically and
    prints:
@@ -200,7 +210,7 @@ Run these as an operator, in game:
                                   configure everything, no commands needed
 /abset strict on                 (recommended) strongest verification
 /abset blockexpiry 7             auto-blocks expire after 7 days
-/abgeo countries add VN          (optional) allow your country only:
+/abgeo countries add US          (optional) allow your country only:
 /abgeo mode whitelist
 /abgeo on
 /abstatus                        review the current configuration
@@ -313,21 +323,58 @@ Examples:
 | `/abgeo` | Show the current geo configuration |
 | `/abgeo <on\|off>` | Enable / disable the country filter |
 | `/abgeo mode <whitelist\|blacklist>` | `whitelist`: only listed countries may join; `blacklist`: listed countries are blocked |
-| `/abgeo countries <add\|remove\|list> [codes...]` | Manage ISO 3166-1 alpha-2 codes (`VN`, `FR`, `US`, ...) |
-| `/abgeo vpn <on\|off>` | AntiVPN: reject proxy / VPN / hosting IPs |
+| `/abgeo countries <add\|remove\|list> [codes...]` | Manage ISO 3166-1 alpha-2 codes (`US`, `FR`, `DE`, ...) |
+| `/abgeo vpn <on\|off>` | AntiVPN: reject proxy / VPN (and hosting, when the API reports it) |
 
 Details:
 
-- Lookups use the free tier of [ip-api.com](https://ip-api.com) (HTTP,
-  45 requests/minute) and are cached **per IP for 24 hours**, so the rate
-  limit is practically never hit on a normal server.
+- Lookups go to the **configured geo provider** (`geo_provider`
+  key in `antibot_config.json`), cached **per IP for 24 hours** so
+  rate limits are practically never hit on a normal server:
+  - `ip-api` (**default**, the original author's endpoint): free,
+    keyless, 45 req/min, non-commercial. The `fields=` query is
+    required — without it ip-api.com returns no proxy/hosting flags
+    at all. ⚠️ Plain **HTTP**: an on-path attacker (hostile Wi-Fi,
+    ISP, transit) can forge the reply or harvest joining players'
+    IP addresses (the VULN-3 concern) — a startup warning
+    is logged whenever the geo layer is on. In live tests it caught
+    38/40 anonymizer IPs (VPN, open proxies, Tor) with 1 false
+    positive on a corporate IP.
+  - `proxycheck`: **HTTPS**, free key at their dashboard (1,000
+    lookups/day; 100/day keyless) via the `geo_api_key` key. Uses the
+    **v3 API** — no query flags needed, the full nested result
+    (including the `detections` node) always comes back. Best
+    detection in live tests: 40/40 anonymizers — including Tor exits
+    hosted on ISP blocks — with zero real-player false positives.
+    Recommended if you want TLS.
+  - `custom`: point `geo_api_url` at any compatible API (e.g. an
+    ip-api.com Pro HTTPS URL). The parser understands the common
+    field names
+    (`countryCode`/`country_code`/`isocode`,
+    `proxy`/`isProxy`/`is_vpn`, `hosting`/`is_datacenter`),
+    tolerates `yes`/`no` string flags and nested layouts (including
+    proxycheck.io v3's `detections` node), so no
+    code changes are needed.
 - AntiVPN is checked **before** the country filter — a VPN IP from an
   allowed country is still blocked.
-- **Fail-open**: if the lookup fails (network error, quota, private IP),
-  the connection is not blocked — the later layers still apply. Real
-  players are never locked out by an API outage.
+- **Fail-open**: if the lookup fails (network error, TLS error,
+  quota, private IP), the connection is not blocked — the later
+  layers still apply. Real players are never locked out by an API
+  outage.
 - An empty country list with the filter on blocks **nobody** (avoids
   locking out the whole server by accident).
+- Every lookup sends a truthful `User-Agent`
+  (`XuidAntiBot/1.0.2 (Endstone plugin)`) — some providers sit behind
+  Cloudflare-style bot filters that reject the default Python-urllib
+  `User-Agent` with 403, so without this every lookup would silently
+  fail-open.
+- When the geo layer is active, the startup log names the configured
+  provider (plus an API-key note when relevant), and the **first
+  successful lookup** of each session is logged once — so you can
+  confirm the provider/key works instead of only seeing failures.
+- Only real 2-letter ISO 3166-1 codes are accepted as countries — a
+  full country *name* in the API reply is never mistaken for a code
+  (it would never match a code whitelist and could block everyone).
 
 ## Verification modes
 
@@ -396,7 +443,7 @@ All state lives in `plugins/XuidAntiBot/` as plain JSON:
 
 | File | Contents |
 |------|----------|
-| `antibot_config.json` | Every setting (26 keys) — mirrors the `/abset` keys |
+| `antibot_config.json` | Every setting (29 keys, incl. `geo_provider`, `geo_api_key`, `geo_api_url`) — mirrors the `/abset` keys |
 | `antibot_blocked.json` | Auto-blocked IPs: `{"<ip>": {"reason": str, "expires_at": float\|null, "banned_at": float\|null}}` (`expires_at: null` = permanent) |
 | `antibot_verified.json` | Sorted list of verified player keys (xuid) |
 
@@ -425,6 +472,10 @@ All state lives in `plugins/XuidAntiBot/` as plain JSON:
   never lock a legitimate verified player out
 - **Bans renew themselves**: an IP that keeps trying to log in while
   blocked gets its expiry extended from scratch
+- **No automatic provider failover**: the admin chose the geo
+  endpoint, and silent failover could be steered by exactly the
+  on-path attacker the TLS providers defend against — a failed lookup
+  fails open for that attempt, nothing more
 
 ## Project structure
 
@@ -438,8 +489,9 @@ xuid_antibot/
 │                       legacy data-folder migration
 ├── helpers.py          IP lookup, bot-name matching, rate limit,
 │                       IP blocking, effects, isolation
-├── geo_filter.py       Country filter + AntiVPN (ip-api.com, 24 h cache)
-├── login_guard.py      The 9 login filter layers
+├── geo_filter.py       Country filter + AntiVPN (HTTPS geo API,
+│                       24 h cache, configurable endpoint)
+├── login_guard.py      The 10 login filter layers
 ├── verify_forms.py     Verification forms (3 modes), honeypot, timeouts
 ├── transfer.py         Post-verification server transfer
 ├── events.py           The 21 event cancellations while pending
@@ -452,7 +504,7 @@ xuid_antibot/
 ```bash
 # Build the wheel from source
 pip install build
-python -m build          # -> dist/endstone_xuidantibot-1.0.1-py3-none-any.whl
+python -m build          # -> dist/endstone_xuidantibot-1.0.2-py3-none-any.whl
 
 # Live development on a running server
 pip install -e .         # in the server's Python environment
@@ -485,7 +537,8 @@ bypass, so country rules apply to everyone. Re-check the list with
 
 **Does it work without internet?**
 Yes, with the geo filter and AntiVPN off (the defaults). Those two
-features need ip-api.com; on API failure the layer fails open.
+features need the geo API (HTTPS); on API failure the layer fails
+open.
 
 **Can bots just guess the 3-button code?**
 Yes, with a 1/3 chance per try — but the 3-wrong-attempts limit means a
@@ -510,6 +563,9 @@ works stay under the same license and keep the source available.
 ## Credits
 
 - [Endstone](https://endstone.dev) — the plugin framework this runs on
-- [ip-api.com](https://ip-api.com) — free IP geolocation/proxy data
+- [ip-api.com](https://ip-api.com) — free IP geolocation + proxy /
+  hosting flags (default geo provider)
+- [proxycheck.io](https://proxycheck.io) — free HTTPS proxy/VPN/Tor
+  detection (recommended provider; optional free API key)
 - Bot protection concepts inspired by the wider Minecraft anti-bot
   community (captcha forms, honeypots, per-IP rate limiting)
